@@ -135,3 +135,24 @@ Run ```terraform init``` in the command line to initialise terraform.
     user_data               = "${data.template_file.db_init.rendered}"
   }
 ```
+
+10. Finally for the base terraform file, we added to the master variables.tf file (outside of the modules folder). In this file, we define variables to use inside the master main.tf file - this is what we added to our variables.tf file:
+```
+  variable "vpc_id" {
+    default = "vpc-02ee46f22955a5b81"
+  }
+
+  variable "app_ami_id" {
+    default = "ami-03b715834d64be8c0"
+  }
+
+  variable "db_ami_id" {
+    default = "ami-052d4b45126cc68ec"
+  }
+
+  variable "ig_id" {
+    default = "igw-08bc9b3838ff3ddf3"
+  }
+```
+
+11. We now turned our attention to blue-green deployment.
