@@ -155,4 +155,92 @@ Run ```terraform init``` in the command line to initialise terraform.
   }
 ```
 
-11. We now turned our attention to blue-green deployment.
+11. We now turned our attention to blue-green deployment. In order to implement blue-green deployment, we need to configure a launch configuration, launch template and autoscaling group. When the terraform file is run, the autoscaling group will use the launch configuration and launch template to spin up instances belonging to each AMI (Amazon Machine Image). The launch configuration and launch template define the instances that will be launched, they may look something like this:
+```
+    resource "aws_launch_configuration" "launch_config" {
+      image_id                = "${var.app_ami_id}"
+      instance_type           = "t2.micro"
+      user_data               = "${data.template_file.app_init.rendered}"
+      key_name                = "DevOpsStudents"
+      security_groups         = ["${module.app.security_group}"]
+      user_data               = "${base64encode(module.app.user_data)}"
+
+      lifecycle {
+        create_before_destroy   = true
+      }
+    }
+
+    resource "aws_launch_template" "launch_template" {
+      image_id                = "${var.app_ami_id}"
+      instance_type           = "t2.micro"
+      key_name                = "DevOpsStudents"
+      vpc_security_group_ids  = ["${module.app.security_group}"]
+      user_data               = "${base64encode(module.app.user_data)}"
+    }
+```
+The autoscaling group uses these two resources to initialise instances on AWS:
+```
+    resource "aws_autoscaling_group" "autoscaling_group" {
+      name                    = "autoscaling_group - ${aws_launch_configuration.launch_config.name}"
+      availability_zones      = ["eu-west-1a","eu-west-1b","eu-west-1c"]
+      vpc_zone_identifier     = ["${module.app.subnet_id_1a}", "${module.app.subnet_id_1b}", "${module.app.subnet_id_1c}"]
+      desired_capacity        = 2
+      max_size                = 3
+      min_size                = 2
+      health_check_grace_period = 300
+      health_check_type       = "ELB"
+
+      launch_template = {
+        id                    = "${aws_launch_template.launch_template.id}"
+        version               = "$$Latest"
+      }
+
+      tags = [{
+        key                   = "Name"
+        value                 = "DevOps-instance"
+        propagate_at_launch   = true
+        }]
+
+      lifecycle {
+          create_before_destroy   = true
+
+      }
+    }
+```
+The ```desired_capacity```,```max_size``` and ```min_size``` all refer to the number of instances that are to be created. Then, add an autoscaling attachment for the autoscaling group:
+```
+    resource "aws_autoscaling_attachment" "autoscaling_attachment" {
+      alb_target_group_arn   = "${aws_lb_target_group.target_group.arn}"
+      autoscaling_group_name = "${aws_autoscaling_group.autoscaling_group.id}"
+    }
+```
+This attaches a target group to the autoscaling group:
+```
+    resource "aws_lb_target_group" "target_group" {
+      name     = "target-group"
+      port     = 80
+      protocol = "TCP"
+      vpc_id   = "${var.vpc_id}"
+      stickiness {
+        type    = "lb_cookie"
+        enabled = false
+      }
+    }
+```
+Additionally, a load balancer must be added. This directs traffic to the different instances depending on the current state of the instances:
+```
+    resource "aws_lb" "lb" {
+      name                    = "lb"
+      internal                = false
+      load_balancer_type      = "network"
+      subnets                 = ["${module.app.subnet_id_1a}", "${module.app.subnet_id_1b}", "${module.app.subnet_id_1c}"]
+
+      enable_deletion_protection = false
+
+      tags {
+        Environment           = "production"
+      }
+    }
+```
+
+12. So we can spin up new instances to which the traffic will redirect to. The idea now is to automate this process as opposed to manually running these commands in the command line. In order to do this, the automation tool Jenkins was used to create a job once the new updated code had been pushed to GitHub. The job was set up to run ```terraform init```, ```terraform plan``` and ```terraform apply``` to initialise and run the terraform file. This, as mentioned previously, will spin up EC2 instances on AWS, ready for the site to go live with smooth transition.
